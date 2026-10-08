@@ -93,3 +93,4 @@
 [submodule "external/unicorn"]
 	path = external/unicorn
 	url = https://github.com/jarrodnorwell/unicorn
+	branch = interp
