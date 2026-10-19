@@ -1,0 +1,32 @@
+name: Build Vion IPA
+on:
+  workflow_dispatch: # Allows you to trigger the build manually
+
+jobs:
+  build_ios:
+    name: Compile iOS App Bundle
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Force Unsigned Build Configuration
+        run: |
+          sed -i '' 's/CODE_SIGNING_ALLOWED = YES/CODE_SIGNING_ALLOWED = NO/g' *.xcodeproj/project.pbxproj || true
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' *.xcodeproj/project.pbxproj || true
+
+      - name: Compile App Bundle
+        run: |
+          xcodebuild -project *.xcodeproj -scheme Vion -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build
+
+      - name: Package into IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/Release-iphoneos/Vion.app Payload/
+          zip -r Vion.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vion-Free-IPA
+          path: Vion.ipa
