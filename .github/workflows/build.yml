@@ -55,6 +55,7 @@ jobs:
           set -o pipefail
           cmake -S . -B build -G Xcode \
             -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_SYSTEM_PROCESSOR=arm64 \
             -DCMAKE_OSX_SYSROOT=iphoneos \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_FIND_ROOT_PATH=/usr/local \
