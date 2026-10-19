@@ -62,6 +62,10 @@ jobs:
             -DVITA3K_FORCE_SYSTEM_BOOST=ON \
             -DFORCE_BUILD_OPENSSL_MAC=ON \
             -DUSE_DISCORD_RICH_PRESENCE=OFF \
+            -DUNICORN_ARCH=arm \
+            -DUNICORN_INTERPRETER=ON \
+            -DUNICORN_BUILD_TESTS=OFF \
+            -DUNICORN_INSTALL=OFF \
             2>&1 | tee configure.log
 
       - name: Build Vion (unsigned)
