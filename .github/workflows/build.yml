@@ -1,6 +1,6 @@
 name: Build Vion IPA
 on:
-  workflow_dispatch: # Allows you to trigger the build manually
+  workflow_dispatch:
 
 jobs:
   build_ios:
@@ -12,17 +12,25 @@ jobs:
 
       - name: Force Unsigned Build Configuration
         run: |
-          sed -i '' 's/CODE_SIGNING_ALLOWED = YES/CODE_SIGNING_ALLOWED = NO/g' *.xcodeproj/project.pbxproj || true
-          sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' *.xcodeproj/project.pbxproj || true
+          find . -name "*.xcodeproj" -exec sed -i '' 's/CODE_SIGNING_ALLOWED = YES/CODE_SIGNING_ALLOWED = NO/g' {}/project.pbxproj \; || true
+          find . -name "*.xcodeproj" -exec sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' {}/project.pbxproj \; || true
 
       - name: Compile App Bundle
         run: |
-          xcodebuild -project *.xcodeproj -scheme Vion -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build
+          # Find the actual project file dynamically wherever it is hidden
+          PROJECT_PATH=$(find . -name "*.xcodeproj" | head -n 1)
+          echo "Found project at: $PROJECT_PATH"
+          
+          # Extract just the scheme name or default to Vion
+          xcodebuild -project "$PROJECT_PATH" -scheme Vion -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build || \
+          xcodebuild -project "$PROJECT_PATH" -scheme vion -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build
 
       - name: Package into IPA
         run: |
           mkdir -p Payload
-          cp -r build/Release-iphoneos/Vion.app Payload/
+          # Locate the compiled .app file dynamically in the build directory
+          APP_PATH=$(find build -name "*.app" | head -n 1)
+          cp -r "$APP_PATH" Payload/
           zip -r Vion.ipa Payload
 
       - name: Upload IPA Artifact
