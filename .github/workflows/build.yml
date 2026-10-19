@@ -1,47 +1,112 @@
 name: Build Vion IPA
+
 on:
   workflow_dispatch:
+
+env:
+  BOOST_VERSION: "1.88.0"
+  IOS_DEPLOYMENT_TARGET: "16.0"
 
 jobs:
   build_ios:
     name: Compile iOS App Bundle
-    runs-on: macos-14
+    # The app uses an Icon Composer ".icon" asset, which needs Xcode 26+.
+    runs-on: macos-26
+    timeout-minutes: 150
+
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v6
         with:
-          submodules: recursive # Important if Vion pulls Vita3K core assets
+          submodules: recursive
 
-      - name: Install System Dependencies
+      - name: Select Xcode 26.6
         run: |
-          brew install cmake ninja
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
 
-      - name: Configure CMake for iOS
+      - name: Install tools
+        run: brew install cmake ninja ldid
+
+      # The repo's CMake forces a *system* Boost at /usr/local when building for iOS,
+      # so an iOS (arm64) build of Boost.Filesystem has to be installed there first.
+      - name: Build and install Boost.Filesystem for iOS
         run: |
-          cmake -B build -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/ios.toolchain.cmake \
-            -DPLATFORM=OS64 \
+          curl -fL "https://github.com/boostorg/boost/releases/download/boost-${BOOST_VERSION}/boost-${BOOST_VERSION}-cmake.tar.xz" -o boost.tar.xz
+          tar xf boost.tar.xz
+          cmake -S "boost-${BOOST_VERSION}" -B boost-build -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${IOS_DEPLOYMENT_TARGET}" \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCODE_SIGNING_ALLOWED=OFF \
-            -DCODE_SIGNING_REQUIRED=OFF
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_TESTING=OFF \
+            -DBOOST_INCLUDE_LIBRARIES=filesystem \
+            -DCMAKE_INSTALL_PREFIX=/usr/local
+          cmake --build boost-build
+          sudo cmake --install boost-build
 
-      - name: Compile Application Core
+      # Vion's iOS target uses Xcode-specific properties, so the Xcode generator is required.
+      - name: Configure CMake (iOS, Xcode generator)
         run: |
-          cmake --build build --config Release
+          set -o pipefail
+          cmake -S . -B build -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_FIND_ROOT_PATH=/usr/local \
+            -DVITA3K_FORCE_SYSTEM_BOOST=ON \
+            -DFORCE_BUILD_OPENSSL_MAC=ON \
+            -DUSE_DISCORD_RICH_PRESENCE=OFF \
+            2>&1 | tee configure.log
 
-      - name: Package App Bundle into IPA
+      - name: Build Vion (unsigned)
         run: |
-          mkdir -p Payload
-          # Locates the newly created .app package out of the build directory
-          APP_PATH=$(find build -name "*.app" -type d | head -n 1)
+          set -o pipefail
+          cmake --build build --config Release --target Vion --parallel -- \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            2>&1 | tee build.log
+
+      - name: Package .app into IPA
+        run: |
+          APP_PATH=$(find build -type d -name "Vion.app" -path "*Release-iphoneos*" | head -n 1)
           if [ -z "$APP_PATH" ]; then
-            echo "Error: Could not find compiled .app folder bundle!" && exit 1
+            echo "Error: Vion.app not found. Bundles present:"
+            find build -name "*.app" -type d
+            exit 1
           fi
-          cp -r "$APP_PATH" Payload/
-          zip -r Vion.ipa Payload
+          echo "Found: $APP_PATH"
+          rm -rf Payload Vion.ipa
+          mkdir Payload
+          cp -R "$APP_PATH" Payload/
+          lipo -info Payload/Vion.app/Vion
+          # Fake-sign with the app's entitlements (extended memory etc.) so a sideloading
+          # tool can re-sign it. Non-fatal if it fails.
+          ldid -Svita3k/gui-ios/Vion.entitlements Payload/Vion.app/Vion || echo "ldid step skipped"
+          zip -qry Vion.ipa Payload
+          ls -lh Vion.ipa
 
-      - name: Upload IPA Artifact
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Vion-Free-IPA
+          name: Vion-IPA
           path: Vion.ipa
+
+      # Logs are the only way to debug without a Mac, so always keep them.
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          if-no-files-found: ignore
+          path: |
+            configure.log
+            build.log
+            build/CMakeFiles/CMakeConfigureLog.yaml
+            build/CMakeFiles/CMakeError.log
